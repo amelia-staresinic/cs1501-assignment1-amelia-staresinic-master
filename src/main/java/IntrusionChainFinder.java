@@ -22,23 +22,28 @@ public final class IntrusionChainFinder {
     List<List<Hop>> solutions = new ArrayList<>();
 
     //initialize attacker's global states
-    Set<String> attackerState = new HashSet<>();
+    Set<String> attackerCreds = new HashSet<>();
     if(start.creds != null){
-      attackerState.addAll(start.creds);
+      attackerCreds.addAll(start.creds);
     }
-    if(start.priv != null){
-      attackerState.add(start.priv.toString());
+    Map<String, Priv> attackerPriv = new HashMap<>();
+    for(SystemInfo s : scenario.systems){
+      attackerPriv.put(s.name, s.priv == null ? Priv.NONE : s.priv);
     }
+    attackerPriv.put(start.name, start.priv == null ? Priv.NONE : start.priv);
 
     //initialize reuse count and  visited systems
     Map<String, Integer> exploitReuseCnt = new HashMap<>();
+    Map<String, Set<String>> usedPerSystem = new HashMap<>();
+    for (Exploit e : scenario.exploits) usedPerSystem.put(e.name, new HashSet<>());
+
     Set<String> visited = new HashSet<>();
     visited.add(start.name);
 
     //intial solution chain array
     ArrayList<Hop> singleChain = new ArrayList<>();
 
-    doFindChain(scenario, start, target, start, maxHops, singleChain, solutions, attackerState, exploitReuseCnt, visited);
+    doFindChain(scenario, start, target, start, maxHops, singleChain, solutions, attackerCreds, attackerPriv, usedPerSystem, exploitReuseCnt, visited);
     
     //sort final solutions
     solutions.sort(
@@ -52,11 +57,11 @@ public final class IntrusionChainFinder {
 
   //recursive helper method to find all possible chains
   public static void doFindChain(ScenarioFactory.Scenario scenario, SystemInfo start, SystemInfo target, SystemInfo current, 
-  int maxHops, List<Hop> singleChain, List<List<Hop>> solutions, Set<String> attackerState, Map<String, Integer> exploitReuseCnt, 
-  Set<String> visited){
+  int maxHops, List<Hop> singleChain, List<List<Hop>> solutions, Set<String> attackerCreds, Map<String, Priv> attackerPriv, 
+  Map<String, Set<String>> usedPerSystem, Map<String, Integer> exploitReuseCnt, Set<String> visited){
 
     //check if target is reached
-    if(current.name == target.name){
+    if(current.name.equals(target.name)){
       //sort chain
       solutions.add(new ArrayList<>(singleChain));
       return;
@@ -69,26 +74,29 @@ public final class IntrusionChainFinder {
     for(Exploit e : scenario.exploits){
       //check if local exploit
       if (e.requiredService == ""){
-        if(!checkExploit(current, e, current, attackerState, exploitReuseCnt)){
+        if(!checkExploit(current, e, current, attackerCreds, attackerPriv, exploitReuseCnt, usedPerSystem)){
           continue;
         }
         //add exploit to reuse count
         exploitReuseCnt.put(e.name, 1);
 
         //save effects for recursion
-        Set<String> newAttackerState = new HashSet<>(attackerState);
+        Set<String> newAttackerCreds = new HashSet<>(attackerCreds);
+        Map<String, Priv> newAttackerPriv = new HashMap<>(attackerPriv);
         Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
+        Map<String, Set<String>> newUsedPerSystem = new HashMap<>(usedPerSystem);
         List<Hop> newChain = new ArrayList<>(singleChain);
         Set<String> newVisited = new HashSet<>(visited);
 
         //apply effects, add to chain, and recurse
-        applyExploit(current, e, newAttackerState);
-        newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
+        applyExploit(current, e, newAttackerCreds, newAttackerPriv);
+        applyReuse(e, current.name, newExploitReuseCnt, newUsedPerSystem);
+        //newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
 
         Hop h = new Hop(current.name, current.name, e.name, "LOCAL");
         singleChain.add(h);
 
-        doFindChain(scenario, start, target, current, maxHops, newChain, solutions, newAttackerState, newExploitReuseCnt, newVisited);
+        doFindChain(scenario, start, target, current, maxHops, newChain, solutions, newAttackerCreds, newAttackerPriv, newUsedPerSystem, newExploitReuseCnt, newVisited);
       
       }
       else{
@@ -106,35 +114,40 @@ public final class IntrusionChainFinder {
           if(!r.allow.contains(e.requiredService) || !connection.services.contains(e.requiredService)){
             continue;
           }
-          if(!checkExploit(current, e, connection, attackerState, exploitReuseCnt)){
+          if(!checkExploit(current, e, connection, attackerCreds, attackerPriv, exploitReuseCnt, usedPerSystem)){
             continue;
           }
 
           //save effects for recursion
-          Set<String> newAttackerState = new HashSet<>(attackerState);
+          Set<String> newAttackerCreds = new HashSet<>(attackerCreds);
+          Map<String, Priv> newAttackerPriv = new HashMap<>(attackerPriv);
           Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
+          Map<String, Set<String>> newUsedPerSystem = new HashMap<>(usedPerSystem);
           List<Hop> newChain = new ArrayList<>(singleChain);
           Set<String> newVisited = new HashSet<>(visited);
 
           //apply effects, add to chain, and recurse
-          applyExploit(connection, e, newAttackerState); //apply exploit and save effects
-          newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
+          applyExploit(connection, e, newAttackerCreds, newAttackerPriv); //apply exploit and save effects
+          applyReuse(e, connection.name, newExploitReuseCnt, newUsedPerSystem);
+          //newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
 
           Hop h = new Hop(current.name, connection.name, e.name, e.requiredService);
           newChain.add(h);
           newVisited.add(connection.name);
 
-          doFindChain(scenario, start, target, connection, maxHops, newChain, solutions, newAttackerState, newExploitReuseCnt, newVisited);
+          doFindChain(scenario, start, target, connection, maxHops, newChain, solutions, newAttackerCreds, newAttackerPriv, newUsedPerSystem, newExploitReuseCnt, newVisited);
 
         }
       }
     }
   }
 
-  public static boolean checkExploit(SystemInfo current, Exploit e, SystemInfo target, Set<String> attackerState, Map<String, Integer> exploitReuseCnt){
+  public static boolean checkExploit(SystemInfo current, Exploit e, SystemInfo target, Set<String> attackerCreds, Map<String, Priv> attackerPriv, 
+  Map<String, Integer> exploitReuseCnt, Map<String, Set<String>> usedPerSystem){
     
     //priv check
-    if(!attackerState.contains(e.requiredPrivOnSource.toString())){
+    Priv p = attackerPriv.getOrDefault(current.name, Priv.NONE);
+    if(!comparePriv(p, e.requiredPrivOnSource)){
       return false;
     }
     //os check
@@ -146,7 +159,7 @@ public final class IntrusionChainFinder {
     //creds check
     if(e.requiredCredTag != null){
       boolean credsFound = false;
-      for(String cred : attackerState){
+      for(String cred : attackerCreds){
         if(cred.startsWith(e.requiredCredTag)){
           credsFound = true;
         }
@@ -156,21 +169,68 @@ public final class IntrusionChainFinder {
       }
     }
     //reuse limit check
-    if(exploitReuseCnt.containsKey(e.name) && exploitReuseCnt.get(e.name) >= e.reusePolicy.limit){
-      return false;
+    if(e.reusePolicy == ReusePolicy.UNLIMITED){
+      return true;
+    }
+    else if(e.reusePolicy == ReusePolicy.ONCE_PER_SYSTEM){
+      Set<String> used = usedPerSystem.getOrDefault(e.name, Collections.emptySet());
+      if(used.contains(target.name)){
+        return false;
+      }
+      return true;
+    }
+    else{
+      int uses = exploitReuseCnt.getOrDefault(e.name, 0);
+      if(uses >= e.reusePolicy.limit){
+        return false;
+      }
     }
     return true;
     }
   
-  public static void applyExploit(SystemInfo target, Exploit e, Set<String> attackerState){
+  public static void applyExploit(SystemInfo target, Exploit e, Set<String> attackerCreds, Map<String, Priv> attackerPriv){
     if(e.gainPrivOnTarget != null){
-      if(!attackerState.contains(e.gainPrivOnTarget.toString())){
-        attackerState.add(e.gainPrivOnTarget.toString());
+      Priv p = attackerPriv.getOrDefault(target.name, Priv.NONE);
+      if(comparePriv(e.gainPrivOnTarget, p)){
+        attackerPriv.put(target.name, e.gainPrivOnTarget);
       }
     }
     if(e.addCredsOnTarget && target.creds != null){
-      attackerState.addAll(target.creds);
+      attackerCreds.addAll(target.creds);
     }
+  }
+
+  public static void applyReuse(Exploit e, String sysName, Map<String, Integer> exploitReuseCnt, Map<String, Set<String>> usedPerSystem){
+    if (e.reusePolicy == ReusePolicy.UNLIMITED){
+      return;
+    }
+    if (e.reusePolicy == ReusePolicy.ONCE_PER_SYSTEM){
+      usedPerSystem.computeIfAbsent(e.name, k -> new HashSet<>()).add(sysName);
+      return;
+    }
+    exploitReuseCnt.put(e.name, exploitReuseCnt.getOrDefault(e.name, 0)+1);
+  }
+
+  public static boolean comparePriv(Priv exploitP, Priv currP){
+    if(currP == null){
+      return true;
+    }
+    if(privRank(exploitP) >= privRank(currP)){
+      return true;
+    }
+    return false;
+  }
+  private static int privRank(Priv p){
+    if(p == null || p == Priv.NONE){
+      return 0;
+    }
+    if(p == Priv.USER){
+      return 1;
+    }
+    if(p == Priv.ADMIN){
+      return 2;
+    }
+    return 0;
   }
   private static String chainKey(List<Hop> chain) {
     StringBuilder sb = new StringBuilder();
