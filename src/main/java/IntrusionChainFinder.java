@@ -77,8 +77,6 @@ public final class IntrusionChainFinder {
         if(!checkExploit(current, e, current, attackerCreds, attackerPriv, exploitReuseCnt, usedPerSystem)){
           continue;
         }
-        //add exploit to reuse count
-        exploitReuseCnt.put(e.name, 1);
 
         //save effects for recursion
         Set<String> newAttackerCreds = new HashSet<>(attackerCreds);
@@ -94,7 +92,7 @@ public final class IntrusionChainFinder {
         //newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
 
         Hop h = new Hop(current.name, current.name, e.name, "LOCAL");
-        singleChain.add(h);
+        newChain.add(h);
 
         doFindChain(scenario, start, target, current, maxHops, newChain, solutions, newAttackerCreds, newAttackerPriv, newUsedPerSystem, newExploitReuseCnt, newVisited);
       
@@ -111,7 +109,10 @@ public final class IntrusionChainFinder {
           if(visited.contains(connection.name)){
             continue;
           }
-          if(!r.allow.contains(e.requiredService) || !connection.services.contains(e.requiredService)){
+          if(!r.allow.contains(e.requiredService)){
+            continue;
+          }
+          if(!connection.services.contains(e.requiredService)){
             continue;
           }
           if(!checkExploit(current, e, connection, attackerCreds, attackerPriv, exploitReuseCnt, usedPerSystem)){
@@ -232,6 +233,7 @@ public final class IntrusionChainFinder {
     }
     return 0;
   }
+
   private static String chainKey(List<Hop> chain) {
     StringBuilder sb = new StringBuilder();
     for (Hop h : chain) {
