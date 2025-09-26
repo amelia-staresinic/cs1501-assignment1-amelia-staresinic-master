@@ -138,6 +138,8 @@ public final class IntrusionChainFinder {
 
           doFindChain(scenario, start, target, connection, maxHops, newChain, solutions, newAttackerCreds, newAttackerPriv, newUsedPerSystem, newExploitReuseCnt, newVisited);
 
+          newVisited.remove(connection.name);
+
         }
       }
     }
