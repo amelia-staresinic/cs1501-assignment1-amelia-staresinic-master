@@ -82,7 +82,7 @@ public final class IntrusionChainFinder {
         Set<String> newAttackerCreds = new HashSet<>(attackerCreds);
         Map<String, Priv> newAttackerPriv = new HashMap<>(attackerPriv);
         Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
-        Map<String, Set<String>> newUsedPerSystem = new HashMap<>(usedPerSystem);
+        Map<String, Set<String>> newUsedPerSystem = deepCopyUPS(usedPerSystem);
         List<Hop> newChain = new ArrayList<>(singleChain);
         Set<String> newVisited = new HashSet<>(visited);
 
@@ -123,7 +123,7 @@ public final class IntrusionChainFinder {
           Set<String> newAttackerCreds = new HashSet<>(attackerCreds);
           Map<String, Priv> newAttackerPriv = new HashMap<>(attackerPriv);
           Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
-          Map<String, Set<String>> newUsedPerSystem = new HashMap<>(usedPerSystem);
+          Map<String, Set<String>> newUsedPerSystem = deepCopyUPS(usedPerSystem);
           List<Hop> newChain = new ArrayList<>(singleChain);
           Set<String> newVisited = new HashSet<>(visited);
 
@@ -232,6 +232,14 @@ public final class IntrusionChainFinder {
       return 2;
     }
     return 0;
+  }
+
+  private static Map<String, Set<String>> deepCopyUPS(Map<String, Set<String>> ups){
+    Map<String, Set<String>> copy = new HashMap<>();
+    for (Map.Entry<String, Set<String>> e : ups.entrySet()) {
+      copy.put(e.getKey(), new HashSet<>(e.getValue()));
+    }
+    return copy;
   }
 
   private static String chainKey(List<Hop> chain) {
