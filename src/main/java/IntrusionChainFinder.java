@@ -17,130 +17,170 @@ public final class IntrusionChainFinder {
       SystemInfo start,
       SystemInfo target,
       int maxHops) {
-
-    // TODO: implement recursive backtracking search using a helper recursive method
+    
+    //initialize array for all chains
     List<List<Hop>> solutions = new ArrayList<>();
-    //attacker's global states
-    Set<Priv> attackerPrivs = new HashSet<>();
-    attackerPrivs.add(start.priv);
-    Set<String> attackerState = new HashSet<>(start.creds);
-    attackerState.add(start.priv.toString());
 
+    //initialize attacker's global states
+    Set<String> attackerState = new HashSet<>();
+    if(start.creds != null){
+      attackerState.addAll(start.creds);
+    }
+    if(start.priv != null){
+      attackerState.add(start.priv.toString());
+    }
+
+    //initialize reuse count and  visited systems
     Map<String, Integer> exploitReuseCnt = new HashMap<>();
     Set<String> visited = new HashSet<>();
     visited.add(start.name);
 
-    //intial chain array
+    //intial solution chain array
     ArrayList<Hop> singleChain = new ArrayList<>();
 
-    solutions = doFindChain(scenario, start, target, start, maxHops, singleChain, solutions, attackerState, exploitReuseCnt, visited);
+    doFindChain(scenario, start, target, start, maxHops, singleChain, solutions, attackerState, exploitReuseCnt, visited);
     
-   //sort solutions
+    //sort final solutions
+    solutions.sort(
+      Comparator
+          .comparing((List<Hop> c) -> chainKey(c))
+          .thenComparingInt(List::size)
+    );
 
     return solutions;
   }
-  public static List<List<Hop>> doFindChain(ScenarioFactory.Scenario scenario, SystemInfo start, SystemInfo target, SystemInfo current, int maxHops, List<Hop> singleChain, List<List<Hop>> solutions, 
-  Set<String> attackerState, Map<String, Integer> exploitReuseCnt, Set<String> visited){
-    if(current == target){
+
+  //recursive helper method to find all possible chains
+  public static void doFindChain(ScenarioFactory.Scenario scenario, SystemInfo start, SystemInfo target, SystemInfo current, 
+  int maxHops, List<Hop> singleChain, List<List<Hop>> solutions, Set<String> attackerState, Map<String, Integer> exploitReuseCnt, 
+  Set<String> visited){
+
+    //check if target is reached
+    if(current.name == target.name){
       //sort chain
-      solutions.add(singleChain);
-      return solutions;
+      solutions.add(new ArrayList<>(singleChain));
+      return;
     }
+    //check if hops are maxxed out
     if(singleChain.size() >= maxHops){
-      return solutions;
+      return;
     }
+
     for(Exploit e : scenario.exploits){
+      //check if local exploit
       if (e.requiredService == ""){
         if(!checkExploit(current, e, current, attackerState, exploitReuseCnt)){
           continue;
         }
+        //add exploit to reuse count
         exploitReuseCnt.put(e.name, 1);
+
+        //save effects for recursion
+        Set<String> newAttackerState = new HashSet<>(attackerState);
+        Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
+        List<Hop> newChain = new ArrayList<>(singleChain);
+        Set<String> newVisited = new HashSet<>(visited);
+
+        //apply effects, add to chain, and recurse
+        applyExploit(current, e, newAttackerState);
+        newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
+
         Hop h = new Hop(current.name, current.name, e.name, "LOCAL");
-        attackerState = applyExploit(current, e, attackerState); //apply exploit and save effects - return new privs, creds
-        exploitReuseCnt.put(e.name, exploitReuseCnt.getOrDefault(e.name, 0)+1);
         singleChain.add(h);
-        doFindChain(scenario, start, target, current, maxHops, singleChain, solutions, attackerState, exploitReuseCnt, visited);
-        
-        singleChain.removeLast();
-        //undo effects: revert attacker creds and priv, revert exploit use counters
+
+        doFindChain(scenario, start, target, current, maxHops, newChain, solutions, newAttackerState, newExploitReuseCnt, newVisited);
+      
       }
       else{
+        //lateral exploit
+        //sort routes deterministically
+        List<Route> routes = new ArrayList<>(current.routes);
+        routes.sort(Comparator.comparing(r -> r.to.name));
 
-        for(Route r : current.routes){ //for each possbile route connecting current to something else
+        for(Route r : routes){
           SystemInfo connection = r.to;
-          if(!connection.services.contains(e.requiredService)){
+          //skip visited or disallowed routes
+          if(visited.contains(connection.name)){
             continue;
           }
-          if(visited.contains(connection.name)){
+          if(!r.allow.contains(e.requiredService) || !connection.services.contains(e.requiredService)){
             continue;
           }
           if(!checkExploit(current, e, connection, attackerState, exploitReuseCnt)){
             continue;
           }
-          Hop h = new Hop(current.name, connection.name, e.name, "LATERAL");
-          attackerState = applyExploit(connection, e, attackerState); //apply exploit and save effects
-          visited.add(connection.name);
-          exploitReuseCnt.put(e.name, exploitReuseCnt.getOrDefault(e.name, 0)+1);
-          singleChain.add(h);
-          doFindChain(scenario, start, target, connection, maxHops, singleChain, solutions, attackerState, exploitReuseCnt, visited);
 
-          singleChain.removeLast();
-          //undo effects
-          
+          //save effects for recursion
+          Set<String> newAttackerState = new HashSet<>(attackerState);
+          Map<String, Integer> newExploitReuseCnt = new HashMap<>(exploitReuseCnt);
+          List<Hop> newChain = new ArrayList<>(singleChain);
+          Set<String> newVisited = new HashSet<>(visited);
+
+          //apply effects, add to chain, and recurse
+          applyExploit(connection, e, newAttackerState); //apply exploit and save effects
+          newExploitReuseCnt.put(e.name, newExploitReuseCnt.getOrDefault(e.name, 0)+1);
+
+          Hop h = new Hop(current.name, connection.name, e.name, e.requiredService);
+          newChain.add(h);
+          newVisited.add(connection.name);
+
+          doFindChain(scenario, start, target, connection, maxHops, newChain, solutions, newAttackerState, newExploitReuseCnt, newVisited);
 
         }
       }
     }
-    return solutions;
-
   }
 
   public static boolean checkExploit(SystemInfo current, Exploit e, SystemInfo target, Set<String> attackerState, Map<String, Integer> exploitReuseCnt){
     
-    boolean allchecks = false;
-
-    if(attackerState.contains(e.requiredPrivOnSource.toString())){
-      allchecks = true;
+    //priv check
+    if(!attackerState.contains(e.requiredPrivOnSource.toString())){
+      return false;
     }
+    //os check
     if(e.osContains != null){
-      if(target.os.contains(e.osContains)){
-        allchecks = true;
-      }
-      else{
+      if(!target.os.contains(e.osContains)){
         return false;
       }
-      }
+    }
+    //creds check
     if(e.requiredCredTag != null){
+      boolean credsFound = false;
       for(String cred : attackerState){
         if(cred.startsWith(e.requiredCredTag)){
-          allchecks = true;
+          credsFound = true;
         }
       }
-      if(allchecks == false){
+      if(!credsFound){
           return false;
       }
-      }
+    }
+    //reuse limit check
     if(exploitReuseCnt.containsKey(e.name) && exploitReuseCnt.get(e.name) >= e.reusePolicy.limit){
       return false;
     }
-    return allchecks;
+    return true;
     }
   
-  public static Set<String> applyExploit(SystemInfo current, Exploit e, Set<String> attackerState){
+  public static void applyExploit(SystemInfo target, Exploit e, Set<String> attackerState){
     if(e.gainPrivOnTarget != null){
       if(!attackerState.contains(e.gainPrivOnTarget.toString())){
         attackerState.add(e.gainPrivOnTarget.toString());
       }
     }
-    if(e.addCredsOnTarget){
-      for(String c : current.creds){
-        attackerState.add(c);
-      }
+    if(e.addCredsOnTarget && target.creds != null){
+      attackerState.addAll(target.creds);
     }
-    return attackerState;
   }
-  public static void undoExploit(){
-
+  private static String chainKey(List<Hop> chain) {
+    StringBuilder sb = new StringBuilder();
+    for (Hop h : chain) {
+      sb.append(h.from).append('|')
+        .append(h.viaService).append('|')
+        .append(h.viaExploit).append('|')
+        .append(h.to).append("->");
+    }
+    return sb.toString();
   }
 
 }
