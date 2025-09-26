@@ -63,7 +63,9 @@ public final class IntrusionChainFinder {
     //check if target is reached
     if(current.name.equals(target.name)){
       //sort chain
-      solutions.add(new ArrayList<>(singleChain));
+      if(!singleChain.isEmpty()){
+        solutions.add(new ArrayList<>(singleChain));
+      }
       return;
     }
     //check if hops are maxxed out
